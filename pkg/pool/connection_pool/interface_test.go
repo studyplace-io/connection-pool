@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	redis2 "github.com/go-redis/redis/v8"
-	"golanglearning/new_project/connection-pool/pkg/pool/config"
+	"github.com/practice/connection-pool/pkg/pool/config"
 	"log"
 	"testing"
 	"time"
