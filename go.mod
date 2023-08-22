@@ -1,4 +1,4 @@
-module golanglearning/new_project/connection-pool
+module github.com/practice/connection-pool
 
 go 1.20
 

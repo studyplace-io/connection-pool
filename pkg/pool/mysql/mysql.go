@@ -4,19 +4,24 @@ import (
 	"database/sql"
 	"fmt"
 	_ "github.com/go-sql-driver/mysql"
-	"golanglearning/new_project/connection-pool/pkg/pool/config"
+	"github.com/practice/connection-pool/pkg/pool/config"
 	"sync"
 	"time"
 )
 
 // MySQLConnectionPool 实现 ConnectionPool 接口，用于 MySQL 连接池
 type MySQLConnectionPool struct {
+	// pool 存放连接池chan
 	pool          chan *sql.DB
+	// config 连接池通用配置
 	config        *config.ConnectionConfig
+	// mysqlOpts mysql私有配置，不对外暴露
 	mysqlOpts     *mysqlOpt
-	mu            sync.Mutex
+	// connectionNum 记录当下池中的连接数
 	connectionNum int
+	// lastAccessed 记录每个连接实例的最后使用时间
 	lastAccessed  map[*sql.DB]time.Time
+	mu            sync.Mutex
 }
 
 type mysqlOpt struct {
@@ -71,7 +76,8 @@ func (p *MySQLConnectionPool) ReleaseConnection(conn interface{}) {
 }
 
 // ReclaimConnections 回收空闲连接
-func (p *MySQLConnectionPool) ReclaimConnections() {
+
+func (p *MySQLConnectionPool) reclaimConnections() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -90,7 +96,7 @@ func (p *MySQLConnectionPool) startCleanupTask(interval time.Duration) {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		p.ReclaimConnections()
+		p.reclaimConnections()
 	}
 }
 

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/go-redis/redis/v8"
-	"golanglearning/new_project/connection-pool/pkg/pool/config"
+	"github.com/practice/connection-pool/pkg/pool/config"
 	"sync"
 	"time"
 )
@@ -12,16 +12,16 @@ import (
 // RedisConnectionPool redis连接池，实现ConnectionPool接口
 type RedisConnectionPool struct {
 	// pool 存放连接池chan
-	pool          chan *redis.Client
+	pool chan *redis.Client
 	// config 连接池通用配置
-	config        *config.ConnectionConfig
+	config *config.ConnectionConfig
 	// redisOpts redis私有配置，不对外暴露
-	redisOpts     *redisOpt
+	redisOpts *redisOpt
 	// connectionNum 记录当下池中的连接数
 	connectionNum int
 	// lastAccessed 记录每个连接实例的最后使用时间
-	lastAccessed  map[*redis.Client]time.Time
-	mu            sync.Mutex
+	lastAccessed map[*redis.Client]time.Time
+	mu           sync.Mutex
 }
 
 // redisOpt redis私有配置，不对外暴露
@@ -72,7 +72,7 @@ func (p *RedisConnectionPool) GetConnection() (interface{}, error) {
 }
 
 // ReclaimConnections 回收空闲连接
-func (p *RedisConnectionPool) ReclaimConnections() {
+func (p *RedisConnectionPool) reclaimConnections() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -92,7 +92,7 @@ func (p *RedisConnectionPool) startCleanupTask(interval time.Duration) {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		p.ReclaimConnections()
+		p.reclaimConnections()
 	}
 }
 

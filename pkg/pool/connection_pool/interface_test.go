@@ -1,4 +1,4 @@
-package pool
+package connection_pool
 
 import (
 	"context"
@@ -6,8 +6,6 @@ import (
 	"fmt"
 	redis2 "github.com/go-redis/redis/v8"
 	"golanglearning/new_project/connection-pool/pkg/pool/config"
-	"golanglearning/new_project/connection-pool/pkg/pool/mysql"
-	"golanglearning/new_project/connection-pool/pkg/pool/redis"
 	"log"
 	"testing"
 	"time"
@@ -15,7 +13,7 @@ import (
 
 func TestConnectionPoll(t *testing.T) {
 
-	c := &config.ConnectionConfig{
+	cfg := &config.ConnectionConfig{
 		MaxConnections:      10,
 		MaxIdleTime:         600 * time.Second,
 		Timeout:             10 * time.Second,
@@ -24,10 +22,7 @@ func TestConnectionPoll(t *testing.T) {
 	}
 
 	// 创建 MySQL 连接池
-	mysqlPool, err := mysql.NewMySQLConnectionPool("mysql", "root:1234567@tcp(127.0.0.1:3306)/testdb", c)
-	if err != nil {
-		log.Fatal("Failed to create MySQL connection pool:", err)
-	}
+	mysqlPool := NewConnectionPool(MysqlMode("mysql", "root:1234567@tcp(127.0.0.1:3306)/testdb", cfg))
 	defer mysqlPool.Close()
 
 	// 从 MySQL 连接池获取连接
@@ -48,7 +43,7 @@ func TestConnectionPoll(t *testing.T) {
 	defer rows.Close()
 
 	// 创建 Redis 连接池
-	redisPool := redis.NewRedisConnectionPool("127.0.0.1:6379", "", c)
+	redisPool := NewConnectionPool(RedisMode("127.0.0.1:6379", "", cfg))
 	defer redisPool.Close()
 
 	// 从 Redis 连接池获取连接
@@ -65,11 +60,10 @@ func TestConnectionPoll(t *testing.T) {
 		log.Fatal("Failed to set Redis key:", err)
 	}
 
-
 	cc := redisClient.Get(context.Background(), "my-key")
 	if cc.Err() != nil {
 		fmt.Println("err: ", err)
 		return
 	}
-
+	fmt.Println(cc.String())
 }
