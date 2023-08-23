@@ -67,7 +67,7 @@ func (p *RedisConnectionPool) GetConnection() (interface{}, error) {
 		p.mu.Unlock()
 		return conn, nil
 	case <-time.After(p.config.Timeout):
-		return nil, fmt.Errorf("timeout: failed to get MySQL connection")
+		return nil, fmt.Errorf("timeout: failed to get Redis connection")
 	}
 }
 

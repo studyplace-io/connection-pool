@@ -1,52 +1,51 @@
-package mysql
+package etcd
 
 import (
-	"database/sql"
+	"context"
 	"fmt"
-	_ "github.com/go-sql-driver/mysql"
 	"github.com/practice/connection-pool/pkg/pool/config"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"sync"
 	"time"
 )
 
-// MySQLConnectionPool 实现 ConnectionPool 接口，用于 MySQL 连接池
-type MySQLConnectionPool struct {
+// ETCDConnectionPool 实现 ConnectionPool 接口，用于 ETCD 连接池
+type ETCDConnectionPool struct {
 	// pool 存放连接池chan
-	pool chan *sql.DB
+	pool chan *clientv3.Client
 	// config 连接池通用配置
 	config *config.ConnectionConfig
-	// mysqlOpts mysql私有配置，不对外暴露
-	mysqlOpts *mysqlOpt
+	// etcdOpts etcd私有配置，不对外暴露
+	etcdOpts *etcdOpt
 	// connectionNum 记录当下池中的连接数
 	connectionNum int
 	// lastAccessed 记录每个连接实例的最后使用时间
-	lastAccessed map[*sql.DB]time.Time
+	lastAccessed map[*clientv3.Client]time.Time
 	mu           sync.Mutex
 }
 
-type mysqlOpt struct {
-	driver string
-	dsn    string
+type etcdOpt struct {
+	config clientv3.Config
 }
 
-// NewMySQLConnectionPool 创建 MySQL 连接池
-func NewMySQLConnectionPool(driver, dsn string, cfg *config.ConnectionConfig) (*MySQLConnectionPool, error) {
-	db, err := sql.Open(driver, dsn)
+// NewETCDConnectionPool 创建 ETCD 连接池
+func NewETCDConnectionPool(config clientv3.Config, cfg *config.ConnectionConfig) (*ETCDConnectionPool, error) {
+	client, err := clientv3.New(config)
 	if err != nil {
 		return nil, err
 	}
 
-	pool := make(chan *sql.DB, cfg.MaxConnections)
+	pool := make(chan *clientv3.Client, cfg.MaxConnections)
 	for i := 0; i < cfg.MaxConnections; i++ {
-		conn := db
+		conn := client
 		pool <- conn
 	}
 
-	p := &MySQLConnectionPool{
+	p := &ETCDConnectionPool{
 		pool:         pool,
 		config:       cfg,
-		mysqlOpts:    &mysqlOpt{driver: driver, dsn: dsn},
-		lastAccessed: make(map[*sql.DB]time.Time),
+		etcdOpts:     &etcdOpt{config: config},
+		lastAccessed: make(map[*clientv3.Client]time.Time),
 	}
 
 	// 启动定时任务
@@ -58,7 +57,7 @@ func NewMySQLConnectionPool(driver, dsn string, cfg *config.ConnectionConfig) (*
 }
 
 // GetConnection 从 MySQL 连接池获取连接
-func (p *MySQLConnectionPool) GetConnection() (interface{}, error) {
+func (p *ETCDConnectionPool) GetConnection() (interface{}, error) {
 	select {
 	case conn := <-p.pool:
 		p.mu.Lock()
@@ -66,18 +65,17 @@ func (p *MySQLConnectionPool) GetConnection() (interface{}, error) {
 		p.mu.Unlock()
 		return conn, nil
 	case <-time.After(p.config.Timeout):
-		return nil, fmt.Errorf("timeout: failed to get MySQL connection")
+		return nil, fmt.Errorf("timeout: failed to get ETCD connection")
 	}
 }
 
 // ReleaseConnection 释放 MySQL 连接到连接池
-func (p *MySQLConnectionPool) ReleaseConnection(conn interface{}) {
-	p.pool <- conn.(*sql.DB)
+func (p *ETCDConnectionPool) ReleaseConnection(conn interface{}) {
+	p.pool <- conn.(*clientv3.Client)
 }
 
 // ReclaimConnections 回收空闲连接
-
-func (p *MySQLConnectionPool) reclaimConnections() {
+func (p *ETCDConnectionPool) reclaimConnections() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -91,7 +89,7 @@ func (p *MySQLConnectionPool) reclaimConnections() {
 }
 
 // startCleanupTask 启动定时任务来定期调用回收空闲连接的方法
-func (p *MySQLConnectionPool) startCleanupTask(interval time.Duration) {
+func (p *ETCDConnectionPool) startCleanupTask(interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -100,13 +98,13 @@ func (p *MySQLConnectionPool) startCleanupTask(interval time.Duration) {
 	}
 }
 
-// Close 关闭 MySQL 连接池
-func (p *MySQLConnectionPool) Close() {
+// Close 关闭 ETCD 连接池
+func (p *ETCDConnectionPool) Close() {
 	close(p.pool)
 }
 
 // startHealthCheckTask 启动定时任务来定期进行连接池的健康检查
-func (p *MySQLConnectionPool) startHealthCheckTask() {
+func (p *ETCDConnectionPool) startHealthCheckTask() {
 	ticker := time.NewTicker(p.config.HealthCheckInterval)
 	defer ticker.Stop()
 
@@ -116,14 +114,14 @@ func (p *MySQLConnectionPool) startHealthCheckTask() {
 }
 
 // checkConnectionsHealth 检查连接池中连接的健康状态
-func (p *MySQLConnectionPool) checkConnectionsHealth() {
+func (p *ETCDConnectionPool) checkConnectionsHealth() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	now := time.Now()
 	for conn := range p.lastAccessed {
 		// 健康检查逻辑
-		if err := conn.Ping(); err != nil {
+		if _, err := conn.Get(context.Background(), "", clientv3.WithSerializable()); err != nil {
 			// 连接无效，关闭连接并从连接池中移除
 			conn.Close()
 			delete(p.lastAccessed, conn)
@@ -136,7 +134,7 @@ func (p *MySQLConnectionPool) checkConnectionsHealth() {
 }
 
 // startCheckAndModifyConnectionNum 启动定时任务来定期进行连接池的连接数检查
-func (p *MySQLConnectionPool) startCheckAndModifyConnectionNum() {
+func (p *ETCDConnectionPool) startCheckAndModifyConnectionNum() {
 	ticker := time.NewTicker(p.config.HealthCheckInterval)
 	defer ticker.Stop()
 
@@ -146,20 +144,21 @@ func (p *MySQLConnectionPool) startCheckAndModifyConnectionNum() {
 }
 
 // checkAndModifyConnectionNum 检查连接池中连接数量，不够则创建
-func (p *MySQLConnectionPool) checkAndModifyConnectionNum() {
+func (p *ETCDConnectionPool) checkAndModifyConnectionNum() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-
+	// 代表不需要新增连接
 	if (p.config.MaxConnections - p.connectionNum) <= 0 {
 		return
 	}
 	newConnectionNum := p.config.MaxConnections - p.connectionNum
-	db, err := sql.Open(p.mysqlOpts.driver, p.mysqlOpts.dsn)
+
+	ccc, err := clientv3.New(p.etcdOpts.config)
 	if err != nil {
 		return
 	}
 	for i := 0; i < newConnectionNum; i++ {
-		conn := db
+		conn := ccc
 		p.pool <- conn
 	}
 }
